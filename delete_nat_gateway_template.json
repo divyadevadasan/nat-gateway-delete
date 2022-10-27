@@ -1,0 +1,220 @@
+{
+    "AWSTemplateFormatVersion": "2010-09-09",
+    "Parameters": {
+        "LambdaName": {
+            "Type": "String",
+            "Description": "Enter a name for the Lambda function",
+            "Default": "nat_eip_auto_delete"
+        },
+        "LambdaZipFile": {
+            "Type": "String",
+            "Description": "Lambda function zip filename",
+            "Default": "delete_nat_gateway.zip"
+        },
+        "S3Bucket": {
+            "Type": "String",
+            "Description": "S3 bucket name"
+        },
+        "IAMRole": {
+            "Type": "String",
+            "Description": "Lambda Execution Role name",
+            "Default": "nat_eip_delete_role"
+        },
+        "NATRetainEmailNotification": {
+            "Type": "String",
+            "Description": "Email Address to send NAT Gateway retention notification"
+        },
+        "NATGatewayRetention": {
+            "Description": "Set to \"True\" to keep unused NAT Gateways with Retain tag. Set to \"False\" to delete unused NAT Gateways.",
+            "Type": "String",
+            "Default": false,
+            "AllowedValues": [
+                true,
+                false
+            ]
+        }
+    },
+    "Resources": {
+        "NATRetainSNSTopic": {
+            "Type": "AWS::SNS::Topic",
+            "Properties": {
+                "KmsMasterKeyId": "alias/aws/sns",
+                "Subscription": [
+                    {
+                        "Endpoint": {
+                            "Ref": "NATRetainEmailNotification"
+                        },
+                        "Protocol": "email"
+                    }
+                ],
+                "TopicName": "NAT-Gateway-Retain-Notification"
+            }
+        },
+        "NATDeleteLambdaFunction": {
+            "Type": "AWS::Lambda::Function",
+            "Properties": {
+                "Handler": "delete_nat_gateway.lambda_handler",
+                "Role": {
+                    "Fn::GetAtt": [
+                        "LambdaExecutionRole",
+                        "Arn"
+                    ]
+                },
+                "Code": {
+                    "S3Bucket": {
+                        "Ref": "S3Bucket"
+                    },
+                    "S3Key": {
+                        "Ref": "LambdaZipFile"
+                    }
+                },
+                "Runtime": "python3.9",
+                "Environment": {
+                    "Variables": {
+                        "SNS_ARN": {
+                            "Ref": "NATRetainSNSTopic"
+                        },
+                        "Retain": {
+                            "Ref": "NATGatewayRetention"
+                        }
+                    }
+                },
+                "FunctionName": {
+                    "Ref": "LambdaName"
+                },
+                "Timeout": 300
+            }
+        },
+        "LambdaExecutionRole": {
+            "Type": "AWS::IAM::Role",
+            "Properties": {
+                "AssumeRolePolicyDocument": {
+                    "Version": "2012-10-17",
+                    "Statement": [
+                        {
+                            "Effect": "Allow",
+                            "Principal": {
+                                "Service": [
+                                    "lambda.amazonaws.com",
+                                    "events.amazonaws.com"
+                                ]
+                            },
+                            "Action": [
+                                "sts:AssumeRole"
+                            ]
+                        }
+                    ]
+                },
+                "RoleName": {
+                    "Ref": "IAMRole"
+                },
+                "Path": "/"
+            }
+        },
+        "RolePolicies": {
+            "Type": "AWS::IAM::Policy",
+            "Properties": {
+                "PolicyName": "nat-auto-delete-lambda-policy",
+                "PolicyDocument": {
+                    "Version": "2012-10-17",
+                    "Statement": [
+                        {
+                            "Sid": "EC2Describe",
+                            "Effect": "Allow",
+                            "Action": [
+                                "ec2:DescribeAddresses",
+                                "ec2:DescribeInstances",
+                                "ec2:DescribeNatGateways",
+                                "ec2:DescribeRegions"
+                            ],
+                            "Resource": "*"
+                        },
+                        {
+                            "Sid": "EC2WritePermissions",
+                            "Effect": "Allow",
+                            "Action": [
+                                "ec2:AssociateAddress",
+                                "ec2:DeleteNatGateway",
+                                "ec2:ReleaseAddress",
+                                "ec2:DisassociateAddress"
+                            ],
+                            "Resource": "*"
+                        },
+                        {
+                            "Sid": "CloudWatchLogsPermissions",
+                            "Effect": "Allow",
+                            "Action": [
+                                "logs:CreateLogGroup",
+                                "logs:CreateLogStream",
+                                "logs:PutLogEvents"
+                            ],
+                            "Resource": [
+                                {
+                                    "Fn::Sub": "arn:aws:logs:${AWS::Region}:${AWS::AccountId}:log-group:/aws/lambda*"
+                                },
+                                {
+                                    "Fn::Sub": "arn:aws:logs:${AWS::Region}:${AWS::AccountId}:log-group:/aws/lambda*:*"
+                                }
+                            ]
+                        },
+                        {
+                            "Sid": "CloudWatchPermissions",
+                            "Effect": "Allow",
+                            "Action": [
+                                "cloudwatch:GetMetricStatistics",
+                                "cloudwatch:ListMetrics"
+                            ],
+                            "Resource": "*"
+                        }
+                    ]
+                },
+                "Roles": [
+                    {
+                        "Ref": "LambdaExecutionRole"
+                    }
+                ]
+            }
+        },
+        "CWScheduledRule": {
+            "Type": "AWS::Events::Rule",
+            "Properties": {
+                "Description": "ScheduledRule",
+                "ScheduleExpression": "cron(0 9 15/15 * ? *)",
+                "State": "ENABLED",
+                "Targets": [
+                    {
+                        "Arn": {
+                            "Fn::GetAtt": [
+                                "NATDeleteLambdaFunction",
+                                "Arn"
+                            ]
+                        },
+                        "Id": "id"
+                    }
+                ],
+                "RoleArn": {
+                    "Fn::GetAtt": [
+                        "LambdaExecutionRole",
+                        "Arn"
+                    ]
+                }
+            }
+        },
+        "permissionForEventsToInvokeLambda": {
+            "Type": "AWS::Lambda::Permission",
+            "Properties": {
+                "FunctionName": {
+                    "Ref": "NATDeleteLambdaFunction"
+                },
+                "Action": "lambda:InvokeFunction",
+                "Principal": "events.amazonaws.com",
+                "SourceArn": {
+                    "Fn::GetAtt": [
+                        "CWScheduledRule",
+                        "Arn"
+                    ]
+                }
+            }
+        }
+    }
+}
