@@ -1,4 +1,4 @@
-# AMS Pattern: Resource Optimization - Delete Unused NAT Gateways and EIP
+# AWS Resource Optimization - Delete Unused NAT Gateways and EIP
 
 ## Use Case
 
