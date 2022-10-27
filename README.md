@@ -24,7 +24,8 @@ As a part of the resource utilization project, customers can opt to deploy a sol
 
 ## Solution Architecture
 
-![Deployment Diagram](./NAT-Gateway_Auto_Deletion.png)
+<img width="685" alt="image" src="https://user-images.githubusercontent.com/116830841/198347348-e01dc628-3d38-4ad5-babc-6a2af139007f.png">
+
 
 1. Lambda function is periodically triggered by CWEvents every 15 days. 
 2. Lambda loops through all the regions in the account and identifies active NAT Gateways. It filters CW namespace "AWS/NATGateway" for metric "BytesOutToDestination" for all the active NAT Gateways. 
